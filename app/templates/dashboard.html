@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+    <div class="row">
+        <h2>Dashboard</h2>
+        <button id="logout-btn" type="button">Logout</button>
+    </div>
+
+    <form id="todo-form">
+        <label for="title">Title</label>
+        <input id="title" name="title" type="text" required>
+
+        <label for="description">Description</label>
+        <input id="description" name="description" type="text">
+
+        <button type="submit">Add Todo</button>
+    </form>
+
+    <div class="row">
+        <button id="filter-all" type="button">All</button>
+        <button id="filter-pending" type="button">Pending</button>
+        <button id="filter-completed" type="button">Completed</button>
+    </div>
+
+    <ul id="todo-list"></ul>
+    <p id="message"></p>
+</section>
+
+<script>
+const token = localStorage.getItem("todo_token");
+if (!token) {
+    window.location.href = "/";
+}
+
+const todoForm = document.getElementById("todo-form");
+const todoList = document.getElementById("todo-list");
+const message = document.getElementById("message");
+let currentStatusFilter = null;
+
+function authHeaders() {
+    return {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+    };
+}
+
+function todoItemHtml(todo) {
+    const toggleStatus = todo.status === "pending" ? "completed" : "pending";
+    return `
+        <li class="todo-item">
+            <div>
+                <strong>${todo.title}</strong>
+                <p>${todo.description || ""}</p>
+                <small>Status: ${todo.status}</small>
+            </div>
+            <div class="actions">
+                <button onclick="toggleTodoStatus('${todo.id}', '${toggleStatus}')">Toggle</button>
+                <button onclick="deleteTodo('${todo.id}')">Delete</button>
+            </div>
+        </li>
+    `;
+}
+
+async function loadTodos(status = null) {
+    currentStatusFilter = status;
+    const endpoint = status ? `/api/todos?status=${status}` : "/api/todos";
+    const response = await fetch(endpoint, { headers: authHeaders() });
+    if (!response.ok) {
+        message.textContent = "Failed to load todos.";
+        return;
+    }
+    const todos = await response.json();
+    todoList.innerHTML = todos.map(todoItemHtml).join("");
+}
+
+async function toggleTodoStatus(todoId, newStatus) {
+    await fetch(`/api/todos/${todoId}/status`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify({ status: newStatus }),
+    });
+    await loadTodos(currentStatusFilter);
+}
+
+async function deleteTodo(todoId) {
+    await fetch(`/api/todos/${todoId}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+    });
+    await loadTodos(currentStatusFilter);
+}
+
+todoForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = {
+        title: todoForm.title.value,
+        description: todoForm.description.value || null,
+    };
+
+    const response = await fetch("/api/todos", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        message.textContent = "Could not create todo.";
+        return;
+    }
+
+    todoForm.reset();
+    await loadTodos(currentStatusFilter);
+});
+
+document.getElementById("filter-all").addEventListener("click", () => loadTodos());
+document.getElementById("filter-pending").addEventListener("click", () => loadTodos("pending"));
+document.getElementById("filter-completed").addEventListener("click", () => loadTodos("completed"));
+document.getElementById("logout-btn").addEventListener("click", () => {
+    localStorage.removeItem("todo_token");
+    window.location.href = "/";
+});
+
+loadTodos();
+window.toggleTodoStatus = toggleTodoStatus;
+window.deleteTodo = deleteTodo;
+</script>
+{% endblock %}

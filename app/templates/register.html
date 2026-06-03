@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+    <h2>Register</h2>
+    <form id="register-form">
+        <label for="full_name">Full Name</label>
+        <input id="full_name" name="full_name" type="text" required>
+
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" minlength="6" required>
+
+        <button type="submit">Create Account</button>
+    </form>
+    <p><a href="/">Back to login</a></p>
+    <p id="message"></p>
+</section>
+
+<script>
+const registerForm = document.getElementById("register-form");
+const message = document.getElementById("message");
+
+registerForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = {
+        full_name: registerForm.full_name.value,
+        email: registerForm.email.value,
+        password: registerForm.password.value,
+    };
+
+    const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+        message.textContent = data.detail || "Registration failed";
+        return;
+    }
+
+    message.textContent = "Account created. Redirecting to login...";
+    setTimeout(() => { window.location.href = "/"; }, 1000);
+});
+</script>
+{% endblock %}

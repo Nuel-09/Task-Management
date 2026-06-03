@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+    <h2>Login</h2>
+    <form id="login-form">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+
+        <button type="submit">Sign In</button>
+    </form>
+    <p><a href="/register">Create account</a></p>
+    <p id="message"></p>
+</section>
+
+<script>
+const loginForm = document.getElementById("login-form");
+const message = document.getElementById("message");
+
+loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = {
+        email: loginForm.email.value,
+        password: loginForm.password.value,
+    };
+
+    const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+        message.textContent = data.detail || "Login failed";
+        return;
+    }
+
+    localStorage.setItem("todo_token", data.access_token);
+    window.location.href = "/dashboard";
+});
+</script>
+{% endblock %}
