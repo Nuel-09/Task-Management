@@ -1,3 +1,40 @@
+// Deploy settings are NEVER stored in env.* — Declarative environment{} values
+// cannot be reliably updated from script blocks on Windows agents.
+// Always call deployConfigForCurrentBranch() where deploy settings are needed.
+
+def currentBranchName() {
+    return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'main').replaceFirst('^origin/', '')
+}
+
+def resolveDeployConfig(String branchName) {
+    if (branchName == 'dev') {
+        return [target: 'dev', port: '8000', overlay: 'docker-compose.dev.yml']
+    }
+    if (branchName == 'staging') {
+        return [target: 'staging', port: '8001', overlay: 'docker-compose.staging.yml']
+    }
+    if (branchName == 'main' || branchName == 'master') {
+        return [target: 'prod', port: '8002', overlay: 'docker-compose.prod.yml']
+    }
+    return null
+}
+
+def deployConfigForCurrentBranch() {
+    return resolveDeployConfig(currentBranchName())
+}
+
+def shouldDeployCurrentBranch() {
+    return deployConfigForCurrentBranch() != null
+}
+
+def readGithubDeploymentId() {
+    def idFile = '.github_deployment_id'
+    if (fileExists(idFile)) {
+        return readFile(idFile).trim()
+    }
+    return ''
+}
+
 pipeline {
     agent any
 
@@ -20,11 +57,8 @@ pipeline {
         COVERAGE_THRESHOLD = '70'
         GITHUB_REPO = 'Nuel-09/Task-Management'
         GITHUB_TOKEN_CREDENTIALS = 'github-api-token'
-        DEPLOY_ENV = ''
-        DEPLOY_PORT = ''
-        COMPOSE_OVERLAY = ''
-        DEPLOYMENT_ID_FILE = '.github_deployment_id'
-        GITHUB_DEPLOYMENT_ID = ''
+        // Secret file credential: upload your local .env once in Jenkins (see README).
+        ENV_FILE_CREDENTIALS = 'todo-app-dotenv'
     }
 
     stages {
@@ -37,21 +71,11 @@ pipeline {
         stage('Select Deployment Environment') {
             steps {
                 script {
-                    def branchName = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'main').replaceFirst('^origin/', '')
+                    def branchName = currentBranchName()
+                    def cfg = resolveDeployConfig(branchName)
                     echo "Detected branch: ${branchName}"
-
-                    if (branchName == 'dev') {
-                        env.DEPLOY_ENV = 'dev'
-                        env.DEPLOY_PORT = '8000'
-                        env.COMPOSE_OVERLAY = 'docker-compose.dev.yml'
-                    } else if (branchName == 'staging') {
-                        env.DEPLOY_ENV = 'staging'
-                        env.DEPLOY_PORT = '8001'
-                        env.COMPOSE_OVERLAY = 'docker-compose.staging.yml'
-                    } else if (branchName == 'main' || branchName == 'master') {
-                        env.DEPLOY_ENV = 'prod'
-                        env.DEPLOY_PORT = '8002'
-                        env.COMPOSE_OVERLAY = 'docker-compose.prod.yml'
+                    if (cfg) {
+                        echo "Deployment target: ${cfg['target']} on port ${cfg['port']} (${cfg['overlay']})"
                     } else {
                         echo "No deployment target for branch '${branchName}'. Build and tests only."
                     }
@@ -120,28 +144,35 @@ pipeline {
 
         stage('Create GitHub Deployment') {
             when {
-                expression { return env.DEPLOY_ENV?.trim() && params.ENABLE_GITHUB_DEPLOYMENTS }
+                expression {
+                    return shouldDeployCurrentBranch() && params.ENABLE_GITHUB_DEPLOYMENTS
+                }
             }
             steps {
                 withCredentials([string(credentialsId: env.GITHUB_TOKEN_CREDENTIALS, variable: 'GITHUB_TOKEN')]) {
                     script {
+                        def cfg = deployConfigForCurrentBranch()
                         def refSha = env.GIT_COMMIT ?: 'main'
-                        def environmentUrl = "http://localhost:${env.DEPLOY_PORT}"
+                        def environmentUrl = "http://localhost:${cfg['port']}"
                         def description = "Jenkins deployment ${env.BUILD_TAG}"
+                        def target = cfg['target']
 
                         if (isUnix()) {
-                            sh "python scripts/github_deploy.py create --repo ${env.GITHUB_REPO} --token ${env.GITHUB_TOKEN} --ref ${refSha} --environment ${env.DEPLOY_ENV} --environment-url ${environmentUrl} --description \"${description}\" --output-file ${env.DEPLOYMENT_ID_FILE}"
+                            sh "python scripts/github_deploy.py create --repo ${env.GITHUB_REPO} --token ${env.GITHUB_TOKEN} --ref ${refSha} --environment ${target} --environment-url ${environmentUrl} --description \"${description}\" --output-file .github_deployment_id"
                         } else {
-                            bat "python scripts\\github_deploy.py create --repo ${env.GITHUB_REPO} --token %GITHUB_TOKEN% --ref ${refSha} --environment ${env.DEPLOY_ENV} --environment-url ${environmentUrl} --description \"${description}\" --output-file ${env.DEPLOYMENT_ID_FILE}"
+                            bat "python scripts\\github_deploy.py create --repo ${env.GITHUB_REPO} --token %GITHUB_TOKEN% --ref ${refSha} --environment ${target} --environment-url ${environmentUrl} --description \"${description}\" --output-file .github_deployment_id"
                         }
 
-                        env.GITHUB_DEPLOYMENT_ID = readFile(env.DEPLOYMENT_ID_FILE).trim()
-                        echo "GitHub deployment id: ${env.GITHUB_DEPLOYMENT_ID}"
+                        def deploymentId = readGithubDeploymentId()
+                        echo "GitHub deployment id: ${deploymentId}"
+                        if (!deploymentId) {
+                            error 'GitHub deployment id file is empty after create.'
+                        }
 
                         if (isUnix()) {
-                            sh "python scripts/github_deploy.py update --repo ${env.GITHUB_REPO} --token ${env.GITHUB_TOKEN} --deployment-id ${env.GITHUB_DEPLOYMENT_ID} --state in_progress --environment ${env.DEPLOY_ENV} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
+                            sh "python scripts/github_deploy.py update --repo ${env.GITHUB_REPO} --token ${env.GITHUB_TOKEN} --deployment-id ${deploymentId} --state in_progress --environment ${target} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
                         } else {
-                            bat "python scripts\\github_deploy.py update --repo ${env.GITHUB_REPO} --token %GITHUB_TOKEN% --deployment-id ${env.GITHUB_DEPLOYMENT_ID} --state in_progress --environment ${env.DEPLOY_ENV} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
+                            bat "python scripts\\github_deploy.py update --repo ${env.GITHUB_REPO} --token %GITHUB_TOKEN% --deployment-id ${deploymentId} --state in_progress --environment ${target} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
                         }
                     }
                 }
@@ -150,27 +181,62 @@ pipeline {
 
         stage('Approval (Staging -> Prod)') {
             when {
-                expression { return env.DEPLOY_ENV == 'prod' }
+                expression {
+                    def cfg = deployConfigForCurrentBranch()
+                    return cfg != null && cfg['target'] == 'prod'
+                }
             }
             steps {
                 input message: 'Approve production deployment?', ok: 'Deploy prod'
             }
         }
 
+        stage('Prepare .env from Credentials') {
+            when {
+                expression { return shouldDeployCurrentBranch() }
+            }
+            steps {
+                withCredentials([file(credentialsId: env.ENV_FILE_CREDENTIALS, variable: 'TODO_DOTENV_FILE')]) {
+                    script {
+                        if (isUnix()) {
+                            sh 'cp "$TODO_DOTENV_FILE" .env && chmod 600 .env'
+                        } else {
+                            bat "copy /Y \"%TODO_DOTENV_FILE%\" .env"
+                        }
+                        if (!fileExists('.env')) {
+                            error "Could not create .env from Jenkins credential '${env.ENV_FILE_CREDENTIALS}'."
+                        }
+                        echo '.env prepared from Jenkins secret file (values are not printed in logs).'
+                    }
+                }
+            }
+        }
+
         stage('Deploy Docker Environment') {
             when {
-                expression { return env.DEPLOY_ENV?.trim() }
+                expression { return shouldDeployCurrentBranch() }
             }
             steps {
                 script {
-                    def composeCommand = "docker compose -f docker-compose.yml -f ${env.COMPOSE_OVERLAY} --project-name todo-${env.DEPLOY_ENV} up -d --build"
-                    def psCommand = "docker compose -f docker-compose.yml -f ${env.COMPOSE_OVERLAY} --project-name todo-${env.DEPLOY_ENV} ps"
+                    def cfg = deployConfigForCurrentBranch()
+                    def target = cfg['target']
+                    def overlay = cfg['overlay']
+                    def compose = "docker compose -f docker-compose.yml -f ${overlay} --project-name todo-${target}"
+                    // Fixed container_name in compose files; remove stale container before redeploy.
+                    def containerName = "python-todo-app-${target}"
+                    def downCommand = "${compose} down --remove-orphans"
+                    def upCommand = "${compose} up -d --build --force-recreate --remove-orphans --wait"
+                    def psCommand = "${compose} ps"
 
                     if (isUnix()) {
-                        sh composeCommand
+                        sh "docker rm -f ${containerName} >/dev/null 2>&1 || true"
+                        sh downCommand
+                        sh upCommand
                         sh psCommand
                     } else {
-                        bat composeCommand
+                        bat "docker rm -f ${containerName} 2>nul || ver >nul"
+                        bat downCommand
+                        bat upCommand
                         bat psCommand
                     }
                 }
@@ -179,11 +245,12 @@ pipeline {
 
         stage('Smoke Test Deployment') {
             when {
-                expression { return env.DEPLOY_ENV?.trim() }
+                expression { return shouldDeployCurrentBranch() }
             }
             steps {
                 script {
-                    def smokeCommand = "python -c \"import urllib.request; p='${env.DEPLOY_PORT}'; h=urllib.request.urlopen(f'http://localhost:{p}/health'); assert h.status==200; r=urllib.request.urlopen(f'http://localhost:{p}/'); assert r.status==200; print('smoke ok for', p)\""
+                    def port = deployConfigForCurrentBranch()['port']
+                    def smokeCommand = "python scripts/smoke_deploy.py ${port} --timeout 120 --interval 3"
                     if (isUnix()) {
                         sh smokeCommand
                     } else {
@@ -195,16 +262,24 @@ pipeline {
 
         stage('Mark GitHub Deployment Success') {
             when {
-                expression { return env.GITHUB_DEPLOYMENT_ID?.trim() && params.ENABLE_GITHUB_DEPLOYMENTS }
+                expression {
+                    return shouldDeployCurrentBranch() && params.ENABLE_GITHUB_DEPLOYMENTS
+                }
             }
             steps {
                 withCredentials([string(credentialsId: env.GITHUB_TOKEN_CREDENTIALS, variable: 'GITHUB_TOKEN')]) {
                     script {
-                        def environmentUrl = "http://localhost:${env.DEPLOY_PORT}"
+                        def cfg = deployConfigForCurrentBranch()
+                        def deploymentId = readGithubDeploymentId()
+                        if (!deploymentId) {
+                            error 'Missing GitHub deployment id; Create GitHub Deployment stage may have failed.'
+                        }
+                        def environmentUrl = "http://localhost:${cfg['port']}"
+                        def target = cfg['target']
                         if (isUnix()) {
-                            sh "python scripts/github_deploy.py update --repo ${env.GITHUB_REPO} --token ${env.GITHUB_TOKEN} --deployment-id ${env.GITHUB_DEPLOYMENT_ID} --state success --environment ${env.DEPLOY_ENV} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
+                            sh "python scripts/github_deploy.py update --repo ${env.GITHUB_REPO} --token ${env.GITHUB_TOKEN} --deployment-id ${deploymentId} --state success --environment ${target} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
                         } else {
-                            bat "python scripts\\github_deploy.py update --repo ${env.GITHUB_REPO} --token %GITHUB_TOKEN% --deployment-id ${env.GITHUB_DEPLOYMENT_ID} --state success --environment ${env.DEPLOY_ENV} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
+                            bat "python scripts\\github_deploy.py update --repo ${env.GITHUB_REPO} --token %GITHUB_TOKEN% --deployment-id ${deploymentId} --state success --environment ${target} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
                         }
                     }
                 }
@@ -215,13 +290,16 @@ pipeline {
     post {
         failure {
             script {
-                if (env.GITHUB_DEPLOYMENT_ID?.trim() && params.ENABLE_GITHUB_DEPLOYMENTS) {
+                def cfg = deployConfigForCurrentBranch()
+                def deploymentId = readGithubDeploymentId()
+                if (deploymentId && params.ENABLE_GITHUB_DEPLOYMENTS && cfg) {
                     withCredentials([string(credentialsId: env.GITHUB_TOKEN_CREDENTIALS, variable: 'GITHUB_TOKEN')]) {
-                        def environmentUrl = env.DEPLOY_PORT?.trim() ? "http://localhost:${env.DEPLOY_PORT}" : "http://localhost"
+                        def environmentUrl = "http://localhost:${cfg['port']}"
+                        def target = cfg['target']
                         if (isUnix()) {
-                            sh "python scripts/github_deploy.py update --repo ${env.GITHUB_REPO} --token ${env.GITHUB_TOKEN} --deployment-id ${env.GITHUB_DEPLOYMENT_ID} --state failure --environment ${env.DEPLOY_ENV} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
+                            sh "python scripts/github_deploy.py update --repo ${env.GITHUB_REPO} --token ${env.GITHUB_TOKEN} --deployment-id ${deploymentId} --state failure --environment ${target} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
                         } else {
-                            bat "python scripts\\github_deploy.py update --repo ${env.GITHUB_REPO} --token %GITHUB_TOKEN% --deployment-id ${env.GITHUB_DEPLOYMENT_ID} --state failure --environment ${env.DEPLOY_ENV} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
+                            bat "python scripts\\github_deploy.py update --repo ${env.GITHUB_REPO} --token %GITHUB_TOKEN% --deployment-id ${deploymentId} --state failure --environment ${target} --environment-url ${environmentUrl} --log-url ${env.BUILD_URL}"
                         }
                     }
                 }
@@ -229,11 +307,11 @@ pipeline {
         }
         always {
             script {
-                if (fileExists(env.DEPLOYMENT_ID_FILE)) {
+                if (fileExists('.github_deployment_id')) {
                     if (isUnix()) {
-                        sh "rm -f ${env.DEPLOYMENT_ID_FILE}"
+                        sh 'rm -f .github_deployment_id'
                     } else {
-                        bat "del /f /q ${env.DEPLOYMENT_ID_FILE}"
+                        bat 'del /f /q .github_deployment_id'
                     }
                 }
             }
