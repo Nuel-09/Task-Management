@@ -221,14 +221,22 @@ pipeline {
                     def cfg = deployConfigForCurrentBranch()
                     def target = cfg['target']
                     def overlay = cfg['overlay']
-                    def composeCommand = "docker compose -f docker-compose.yml -f ${overlay} --project-name todo-${target} up -d --build"
-                    def psCommand = "docker compose -f docker-compose.yml -f ${overlay} --project-name todo-${target} ps"
+                    def compose = "docker compose -f docker-compose.yml -f ${overlay} --project-name todo-${target}"
+                    // Fixed container_name in compose files; remove stale container before redeploy.
+                    def containerName = "python-todo-app-${target}"
+                    def downCommand = "${compose} down --remove-orphans"
+                    def upCommand = "${compose} up -d --build --force-recreate --remove-orphans"
+                    def psCommand = "${compose} ps"
 
                     if (isUnix()) {
-                        sh composeCommand
+                        sh "docker rm -f ${containerName} >/dev/null 2>&1 || true"
+                        sh downCommand
+                        sh upCommand
                         sh psCommand
                     } else {
-                        bat composeCommand
+                        bat "docker rm -f ${containerName} 2>nul || ver >nul"
+                        bat downCommand
+                        bat upCommand
                         bat psCommand
                     }
                 }
