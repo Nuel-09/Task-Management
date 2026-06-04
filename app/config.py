@@ -11,7 +11,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "Operations Task Management App"
+    app_name: str = Field(
+        default="Operations Task Management App",
+        alias="APP_NAME",
+    )
+    static_asset_version: str = Field(default="2", alias="STATIC_ASSET_VERSION")
     app_port: int = Field(default=8000, alias="APP_PORT")
     mongodb_uri: str = Field(
         default="mongodb://localhost:27017",
