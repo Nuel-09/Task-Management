@@ -168,10 +168,12 @@ Important: GitHub deployment API requires at least one pushed branch/ref (for ex
 
 ## Jenkins Credentials and Job Setup
 
-Create Jenkins credential:
+Create **two** Jenkins credentials (stored in Jenkins permanently — not in Git).
+
+### 1) GitHub API token
 
 - **Type**: Secret text
-- **ID**: `github-api-token`
+- **ID**: `github-api-token` (must match exactly)
 - **Value**: GitHub personal access token with repo/deployment permissions
 
 Quick way to reuse your local `gh` login token (PowerShell):
@@ -181,6 +183,35 @@ gh auth token
 ```
 
 Paste that value into Jenkins credential `github-api-token`.
+
+### 2) Application `.env` file (Option C — recommended)
+
+Docker Compose needs `MONGODB_URI` and `SECRET_KEY` at deploy time. `.env` is gitignored, so Jenkins must load it from a **Secret file** credential.
+
+**One-time setup in Jenkins UI:**
+
+1. Open Jenkins → **Manage Jenkins** → **Credentials**.
+2. Click **System** → **Global credentials (unrestricted)** → **Add Credentials**.
+3. Configure:
+   - **Kind**: `Secret file`
+   - **File**: upload your real `c:\devopsAssignment\.env` (create it from `.env.example` first if needed)
+   - **ID**: `todo-app-dotenv` (must match exactly — pipeline uses this ID)
+   - **Description**: `Todo app .env for Docker deploy`
+4. Click **Create**.
+
+**Required Jenkins plugin:** `Credentials Binding` (usually installed with “Pipeline” / suggested plugins). If the build fails with “file” step unknown, install **Pipeline: Credentials Binding** under **Manage Jenkins → Plugins**.
+
+**What the pipeline does:** on `dev`, `staging`, and `main` builds, stage **Prepare .env from Credentials** copies that secret file into the job workspace as `.env` immediately before Docker deploy. The file is recreated every build, so you do not need to copy `.env` by hand into `C:\Users\emman\.jenkins\workspace\...`.
+
+**Updating secrets later:** edit the credential in Jenkins (upload a new file) — no Git push required.
+
+**Verify after a build:** in the job console you should see:
+
+```text
+.env prepared from Jenkins secret file (values are not printed in logs).
+```
+
+Do not commit `.env` to GitHub.
 
 Recommended Jenkins job mode:
 
