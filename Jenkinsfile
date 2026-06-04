@@ -225,7 +225,7 @@ pipeline {
                     // Fixed container_name in compose files; remove stale container before redeploy.
                     def containerName = "python-todo-app-${target}"
                     def downCommand = "${compose} down --remove-orphans"
-                    def upCommand = "${compose} up -d --build --force-recreate --remove-orphans"
+                    def upCommand = "${compose} up -d --build --force-recreate --remove-orphans --wait"
                     def psCommand = "${compose} ps"
 
                     if (isUnix()) {
@@ -250,7 +250,7 @@ pipeline {
             steps {
                 script {
                     def port = deployConfigForCurrentBranch()['port']
-                    def smokeCommand = "python -c \"import urllib.request; p='${port}'; h=urllib.request.urlopen(f'http://localhost:{p}/health'); assert h.status==200; r=urllib.request.urlopen(f'http://localhost:{p}/'); assert r.status==200; print('smoke ok for', p)\""
+                    def smokeCommand = "python scripts/smoke_deploy.py ${port} --timeout 120 --interval 3"
                     if (isUnix()) {
                         sh smokeCommand
                     } else {
