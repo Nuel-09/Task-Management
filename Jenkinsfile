@@ -57,6 +57,8 @@ pipeline {
         COVERAGE_THRESHOLD = '70'
         GITHUB_REPO = 'Nuel-09/Task-Management'
         GITHUB_TOKEN_CREDENTIALS = 'github-api-token'
+        // Secret file credential: upload your local .env once in Jenkins (see README).
+        ENV_FILE_CREDENTIALS = 'todo-app-dotenv'
     }
 
     stages {
@@ -186,6 +188,27 @@ pipeline {
             }
             steps {
                 input message: 'Approve production deployment?', ok: 'Deploy prod'
+            }
+        }
+
+        stage('Prepare .env from Credentials') {
+            when {
+                expression { return shouldDeployCurrentBranch() }
+            }
+            steps {
+                withCredentials([file(credentialsId: env.ENV_FILE_CREDENTIALS, variable: 'TODO_DOTENV_FILE')]) {
+                    script {
+                        if (isUnix()) {
+                            sh 'cp "$TODO_DOTENV_FILE" .env && chmod 600 .env'
+                        } else {
+                            bat "copy /Y \"%TODO_DOTENV_FILE%\" .env"
+                        }
+                        if (!fileExists('.env')) {
+                            error "Could not create .env from Jenkins credential '${env.ENV_FILE_CREDENTIALS}'."
+                        }
+                        echo '.env prepared from Jenkins secret file (values are not printed in logs).'
+                    }
+                }
             }
         }
 
