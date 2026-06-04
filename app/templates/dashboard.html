@@ -1,25 +1,30 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="card">
-    <div class="row">
-        <h2>Dashboard</h2>
-        <button id="logout-btn" type="button">Logout</button>
+    <div class="dashboard-header">
+        <div>
+            <h1>{{ app_name }}</h1>
+            <p class="dashboard-subtitle">Dashboard</p>
+        </div>
+        <button id="logout-btn" type="button" class="btn btn-secondary btn-sm">Logout</button>
     </div>
 
-    <form id="todo-form">
-        <label for="title">Title</label>
-        <input id="title" name="title" type="text" required>
+    <div class="todo-form-section">
+        <form id="todo-form">
+            <label for="title">Title</label>
+            <input id="title" name="title" type="text" placeholder="What do you need to do?" required>
 
-        <label for="description">Description</label>
-        <input id="description" name="description" type="text">
+            <label for="description">Description</label>
+            <textarea id="description" name="description" placeholder="Add optional details"></textarea>
 
-        <button type="submit">Add Todo</button>
-    </form>
+            <button type="submit" class="btn btn-primary">Add Todo</button>
+        </form>
+    </div>
 
-    <div class="row">
-        <button id="filter-all" type="button">All</button>
-        <button id="filter-pending" type="button">Pending</button>
-        <button id="filter-completed" type="button">Completed</button>
+    <div class="filter-bar" role="group" aria-label="Filter todos">
+        <button id="filter-all" type="button" class="btn btn-secondary is-active">All</button>
+        <button id="filter-pending" type="button" class="btn btn-secondary">Pending</button>
+        <button id="filter-completed" type="button" class="btn btn-secondary">Completed</button>
     </div>
 
     <ul id="todo-list"></ul>
@@ -35,6 +40,11 @@ if (!token) {
 const todoForm = document.getElementById("todo-form");
 const todoList = document.getElementById("todo-list");
 const message = document.getElementById("message");
+const filterButtons = {
+    all: document.getElementById("filter-all"),
+    pending: document.getElementById("filter-pending"),
+    completed: document.getElementById("filter-completed"),
+};
 let currentStatusFilter = null;
 
 function authHeaders() {
@@ -44,18 +54,39 @@ function authHeaders() {
     };
 }
 
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function setActiveFilter(status) {
+    Object.entries(filterButtons).forEach(([key, button]) => {
+        const isActive = (status === null && key === "all") || status === key;
+        button.classList.toggle("is-active", isActive);
+    });
+}
+
 function todoItemHtml(todo) {
+    const toggleLabel = todo.status === "pending" ? "Mark complete" : "Mark pending";
     const toggleStatus = todo.status === "pending" ? "completed" : "pending";
+    const title = escapeHtml(todo.title);
+    const description = escapeHtml(todo.description || "No description");
+    const status = escapeHtml(todo.status);
+
     return `
         <li class="todo-item">
             <div>
-                <strong>${todo.title}</strong>
-                <p>${todo.description || ""}</p>
-                <small>Status: ${todo.status}</small>
+                <strong>${title}</strong>
+                <p>${description}</p>
+                <span class="status-badge ${status}">${status}</span>
             </div>
             <div class="actions">
-                <button onclick="toggleTodoStatus('${todo.id}', '${toggleStatus}')">Toggle</button>
-                <button onclick="deleteTodo('${todo.id}')">Delete</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleTodoStatus('${todo.id}', '${toggleStatus}')">${toggleLabel}</button>
+                <button type="button" class="btn btn-danger btn-sm" onclick="deleteTodo('${todo.id}')">Delete</button>
             </div>
         </li>
     `;
@@ -63,14 +94,21 @@ function todoItemHtml(todo) {
 
 async function loadTodos(status = null) {
     currentStatusFilter = status;
+    setActiveFilter(status);
     const endpoint = status ? `/api/todos?status=${status}` : "/api/todos";
     const response = await fetch(endpoint, { headers: authHeaders() });
     if (!response.ok) {
         message.textContent = "Failed to load todos.";
+        message.classList.remove("success");
         return;
     }
     const todos = await response.json();
+    if (todos.length === 0) {
+        todoList.innerHTML = '<li class="empty-state">No todos yet. Add your first task above.</li>';
+        return;
+    }
     todoList.innerHTML = todos.map(todoItemHtml).join("");
+    message.textContent = "";
 }
 
 async function toggleTodoStatus(todoId, newStatus) {
@@ -105,10 +143,13 @@ todoForm.addEventListener("submit", async (event) => {
 
     if (!response.ok) {
         message.textContent = "Could not create todo.";
+        message.classList.remove("success");
         return;
     }
 
     todoForm.reset();
+    message.textContent = "Todo added.";
+    message.classList.add("success");
     await loadTodos(currentStatusFilter);
 });
 

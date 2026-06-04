@@ -11,7 +11,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "Python Todo Management App"
+    app_name: str = "Operations Task Management App"
     app_port: int = Field(default=8000, alias="APP_PORT")
     mongodb_uri: str = Field(
         default="mongodb://localhost:27017",
