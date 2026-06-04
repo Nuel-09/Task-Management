@@ -46,6 +46,7 @@ def render_template(request: Request, template_name: str) -> HTMLResponse:
     context = {
         "request": request,
         "app_name": settings.app_name,
+        "static_version": settings.static_asset_version,
     }
     # Starlette changed TemplateResponse signature in newer releases.
     try:
